@@ -33,7 +33,9 @@ rather than assumed to have two, because a wrong amount is worse than an error.
 
 **Separators.** `1.234,56` and `1,234.56` are the same amount written by two
 people. The separators come from `Intl`, so there is no table here to fall out
-of date.
+of date. And a decimal disguised as grouping — `12.34` typed into a de-DE field —
+is **refused** rather than read as 1234.00: a group separator is only stripped
+where the digits are actually grouped, final group of three, no group longer.
 
 ## Use
 

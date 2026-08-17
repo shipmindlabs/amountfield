@@ -51,6 +51,30 @@ test("both separator conventions read to the same amount", () => {
   assert.equal(amount("1234.56", eur).minor, amount("1234,56", de).minor);
 });
 
+// The headline failure: a decimal written with the wrong separator for the
+// locale. Stripping the dot as "grouping" would read 12.34 as 1234.00 — off by
+// a factor of a hundred, silently.
+test("a decimal disguised as grouping is refused, not read a hundredfold", () => {
+  const wrongDot = parse("12.34", de);
+  assert.equal(wrongDot.ok, false);
+  assert.equal((wrongDot as { ok: false; reason: string }).reason, "bad-grouping");
+
+  const wrongComma = parse("12,34", eur);
+  assert.equal(wrongComma.ok, false);
+  assert.equal((wrongComma as { ok: false; reason: string }).reason, "bad-grouping");
+
+  // Real grouping still reads: the final group has three digits.
+  assert.equal(amount("1.234", de).minor, 123400n);
+  assert.equal(amount("12.345.678", de).minor, 1234567800n);
+  // Lakh-style grouping is what several locales genuinely write.
+  assert.equal(amount("1,23,456.78", { currency: "EUR", locale: "en-IN" }).minor, 12345678n);
+});
+
+test("a group separator in the fraction is not a number", () => {
+  const result = parse("1.23,45", eur);
+  assert.equal(result.ok, false);
+});
+
 test("what is not an amount comes back with a reason", () => {
   const cases: Record<string, string> = {
     "": "empty",
@@ -84,6 +108,14 @@ test("formatting goes through the decimal string, so nothing is a float", () => 
 // bug in these components.
 test("an unfinished amount is incomplete, not invalid", () => {
   for (const text of ["", "  ", "-"]) {
+    const state = typed(text, eur);
+    assert.equal(state.incomplete, true, `"${text}" should be incomplete`);
+    assert.equal(state.problem, null, `"${text}" should carry no error`);
+  }
+
+  // "1," on the way to "1,234": the group has not reached three digits yet,
+  // which is unfinished, not wrong.
+  for (const text of ["1,", "1,2", "1,23"]) {
     const state = typed(text, eur);
     assert.equal(state.incomplete, true, `"${text}" should be incomplete`);
     assert.equal(state.problem, null, `"${text}" should carry no error`);

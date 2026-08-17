@@ -69,8 +69,9 @@ export function blurred(state: FieldState, options: FieldOptions): FieldState {
 function isPrefixOfAnAmount(text: string, options: FieldOptions): boolean {
   const trimmed = text.trim();
   if (trimmed === "" || trimmed === "-") return true;
-  // A trailing separator: "12." or "12,". Parsing it as-is fails, parsing it
-  // with a zero appended tells us whether the rest was sound.
-  const withZero = parse(trimmed + "0", options);
-  return withZero.ok;
+  // "12." needs one more digit to parse; "1," needs three, because a group has
+  // to reach three digits before the grouping rule accepts it. So the question
+  // "could this still become an amount" is asked by finishing it every way a
+  // few keystrokes could.
+  return ["0", "00", "000"].some((completion) => parse(trimmed + completion, options).ok);
 }

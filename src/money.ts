@@ -93,7 +93,14 @@ export type ParseFailure =
   | "empty"
   | "not-a-number"
   | "too-many-decimals"
-  | "too-many-separators";
+  | "too-many-separators"
+  /**
+   * The group separator is there but the digits are not grouped: "12.34" in
+   * de-DE. Nine times out of ten this is a decimal written with the wrong
+   * separator, and stripping it would read the amount off by a factor of a
+   * hundred — so it is refused instead.
+   */
+  | "bad-grouping";
 
 /**
  * Read typed text into exact minor units.
@@ -111,15 +118,37 @@ export function parse(text: string, options: ParseOptions): ParseResult {
   const negative = cleaned.startsWith("-");
   if (negative) cleaned = cleaned.slice(1);
 
-  // Group separators are decoration; the decimal separator is meaning.
-  if (group) cleaned = cleaned.split(group).join("");
   // A space is grouping in several locales, and a stray one otherwise.
-  cleaned = cleaned.replace(/[\s  ]/g, "");
+  cleaned = cleaned.replace(/[\s\u00A0\u202F\u2009]/g, "");
 
+  // The decimal separator is meaning, so it is split off first — before group
+  // separators are touched, or "1.234,56" and "12.34" would be indistinguishable.
   const pieces = cleaned.split(decimal);
   if (pieces.length > 2) return { ok: false, reason: "too-many-separators" };
 
-  const [whole = "", fraction = ""] = pieces;
+  let [whole = "", fraction = ""] = pieces;
+
+  // A group separator after the decimal point is never a number.
+  if (group && fraction.includes(group)) return { ok: false, reason: "not-a-number" };
+
+  // Group separators are decoration, but only where the digits are actually
+  // grouped. "1.234" in de-DE is a thousand; "12.34" in de-DE is almost always
+  // a decimal written with the wrong separator, and silently stripping the dot
+  // would read it as 1234.00 — off by a factor of a hundred, which is the exact
+  // failure this module exists to prevent. The rule that separates the two:
+  // the final group must be exactly three digits, and no group may exceed
+  // three. (Groups of one or two before the last accommodate lakh-style
+  // grouping, which several locales really use.)
+  if (group && whole.includes(group)) {
+    const groups = whole.split(group);
+    const plausible =
+      groups.every((piece) => /^\d+$/.test(piece)) &&
+      groups.every((piece) => piece.length <= 3) &&
+      groups[groups.length - 1]!.length === 3;
+    if (!plausible) return { ok: false, reason: "bad-grouping" };
+    whole = groups.join("");
+  }
+
   if (!/^\d*$/.test(whole) || !/^\d*$/.test(fraction)) return { ok: false, reason: "not-a-number" };
   if (whole === "" && fraction === "") return { ok: false, reason: "not-a-number" };
   if (fraction.length > exponent) return { ok: false, reason: "too-many-decimals" };
