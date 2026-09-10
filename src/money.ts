@@ -67,15 +67,24 @@ export type Separators = {
   readonly group: string;
 };
 
+const separators = new Map<string, Separators>();
+
 /**
  * Read the separators a locale actually uses, from the platform rather than a
  * table this library would have to maintain and get wrong.
  */
 export function separatorsFor(locale: string): Separators {
+  // Parsing runs on every keystroke, and building the formatter is the
+  // expensive half of this function.
+  const known = separators.get(locale);
+  if (known) return known;
+
   const parts = new Intl.NumberFormat(locale, { useGrouping: true }).formatToParts(1234567.8);
   const decimal = parts.find((part) => part.type === "decimal")?.value ?? ".";
   const group = parts.find((part) => part.type === "group")?.value ?? "";
-  return { decimal, group };
+  const found = { decimal, group };
+  separators.set(locale, found);
+  return found;
 }
 
 export type ParseOptions = {
@@ -106,7 +115,9 @@ export type ParseFailure =
  * Read typed text into exact minor units.
  *
  * Everything is done on the digits as text, so no float ever exists: "12.34"
- * becomes 1234 by moving the decimal point, not by multiplying.
+ * becomes 1234 by moving the decimal point, not by multiplying. The currency is
+ * the caller's, never read out of the text: "$12.34" in a EUR field is refused
+ * rather than quietly turned into dollars.
  */
 export function parse(text: string, options: ParseOptions): ParseResult {
   const exponent = exponentOf(options.currency, options.exponent);
@@ -116,10 +127,13 @@ export function parse(text: string, options: ParseOptions): ParseResult {
   if (cleaned === "") return { ok: false, reason: "empty" };
 
   const negative = cleaned.startsWith("-");
-  if (negative) cleaned = cleaned.slice(1);
+  if (negative) cleaned = cleaned.slice(1).trim();
 
-  // A space is grouping in several locales, and a stray one otherwise.
-  cleaned = cleaned.replace(/[\s\u00A0\u202F\u2009]/g, "");
+  // A space groups thousands in several locales — fr-FR writes "1 234,56" with
+  // a narrow no-break space — and is a stray one elsewhere. It is never a
+  // decimal point, so it is read as grouping and then judged by the grouping
+  // rule below, rather than silently removed.
+  cleaned = cleaned.replace(/\s+/g, group);
 
   // The decimal separator is meaning, so it is split off first — before group
   // separators are touched, or "1.234,56" and "12.34" would be indistinguishable.
@@ -156,6 +170,49 @@ export function parse(text: string, options: ParseOptions): ParseResult {
   const digits = (whole || "0") + fraction.padEnd(exponent, "0");
   const minor = BigInt(digits) * (negative ? -1n : 1n);
   return { ok: true, money: { minor, currency: options.currency.toUpperCase(), exponent } };
+}
+
+/**
+ * Whether text that does not parse is a prefix of an amount rather than a wrong
+ * one: "-" on the way to "-5", "1 2" on the way to "1 234". Half-typed input is
+ * a transient state, and a field that shows an error for it turns red between
+ * the "." and the "5" of "12.50".
+ *
+ * A complete amount is not incomplete, so "12." — which is twelve — is false.
+ */
+export function isIncomplete(text: string, options: ParseOptions): boolean {
+  if (parse(text, options).ok) return false;
+
+  const exponent = exponentOf(options.currency, options.exponent);
+  const { decimal, group } = separatorsFor(options.locale ?? "en-US");
+
+  let rest = text.trim();
+  if (rest === "") return true;
+  if (rest.startsWith("-")) rest = rest.slice(1).trim();
+  if (rest === "") return true;
+
+  const pieces = rest.replace(/\s+/g, group).split(decimal);
+  if (pieces.length > 2) return false;
+
+  const [whole = "", fraction = ""] = pieces;
+  // More typing only ever adds decimals, so a fraction that is already too long
+  // is wrong rather than unfinished.
+  if (!/^\d*$/.test(fraction) || fraction.length > exponent) return false;
+  return isPrefixOfGrouping(whole, group);
+}
+
+/** Whether a whole part could still grow into a correctly grouped one. */
+function isPrefixOfGrouping(whole: string, group: string): boolean {
+  if (!group || !whole.includes(group)) return /^\d*$/.test(whole);
+  const groups = whole.split(group);
+  // Every group but the last is finished, so it has to be one to three digits.
+  // The last one is still being typed: it may be short, or not there at all.
+  return groups.every(
+    (piece, index) =>
+      /^\d*$/.test(piece) &&
+      piece.length <= 3 &&
+      (piece.length > 0 || index === groups.length - 1),
+  );
 }
 
 export type FormatOptions = {

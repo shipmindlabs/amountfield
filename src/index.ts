@@ -7,6 +7,7 @@ export {
   EXPONENTS,
   exponentOf,
   format,
+  isIncomplete,
   parse,
   separatorsFor,
   toDecimalString,

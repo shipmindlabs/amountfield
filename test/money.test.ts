@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import {
   exponentOf,
   format,
+  isIncomplete,
   parse,
   toDecimalString,
   UnknownCurrency,
@@ -13,12 +14,19 @@ import { blurred, initial, typed, type FieldOptions } from "../src/field.ts";
 
 const eur: FieldOptions = { currency: "EUR", locale: "en-US" };
 const de: FieldOptions = { currency: "EUR", locale: "de-DE" };
+const fr: FieldOptions = { currency: "EUR", locale: "fr-FR" };
 const jpy: FieldOptions = { currency: "JPY", locale: "ja-JP" };
 
 function amount(text: string, options: FieldOptions): Money {
   const result = parse(text, options);
   assert.equal(result.ok, true, `expected "${text}" to parse`);
   return (result as { ok: true; money: Money }).money;
+}
+
+function failure(text: string, options: FieldOptions): string {
+  const result = parse(text, options);
+  assert.equal(result.ok, false, `"${text}" was accepted`);
+  return (result as { ok: false; reason: string }).reason;
 }
 
 test("amounts are exact minor units, never floats", () => {
@@ -44,6 +52,16 @@ test("an unknown currency is refused rather than guessed at two decimals", () =>
   assert.equal(amount("10.00", { currency: "XYZ", exponent: 2 }).minor, 1000n);
 });
 
+// The currency belongs to the field, not to the text in it. A symbol or a code
+// in the string is refused rather than believed.
+test("the currency comes from the caller, never from the string", () => {
+  assert.equal(amount("12.34", eur).currency, "EUR");
+  for (const text of ["$12.34", "12.34 USD", "\u20AC12,34"]) {
+    assert.equal(parse(text, eur).ok, false, `"${text}" was accepted`);
+    assert.equal(isIncomplete(text, eur), false, `"${text}" should not look unfinished`);
+  }
+});
+
 // "1.234,56" and "1,234.56" are the same amount written by two people.
 test("both separator conventions read to the same amount", () => {
   assert.equal(amount("1,234.56", eur).minor, 123456n);
@@ -51,17 +69,24 @@ test("both separator conventions read to the same amount", () => {
   assert.equal(amount("1234.56", eur).minor, amount("1234,56", de).minor);
 });
 
+// fr-FR groups with a narrow no-break space, and people paste ordinary ones.
+test("a space is grouping, and still has to be grouping", () => {
+  assert.equal(amount("1 234,56", fr).minor, 123456n);
+  assert.equal(amount("1\u00A0234,56", fr).minor, 123456n);
+  assert.equal(amount("1\u202F234,56", fr).minor, 123456n);
+  // The same space in a locale that groups with something else is grouping too.
+  assert.equal(amount("1 234.56", eur).minor, 123456n);
+  assert.equal(amount("1 234,56", de).minor, 123456n);
+  // But it is judged by the grouping rule rather than quietly dropped.
+  assert.equal(failure("12 34", eur), "bad-grouping");
+});
+
 // The headline failure: a decimal written with the wrong separator for the
 // locale. Stripping the dot as "grouping" would read 12.34 as 1234.00 — off by
 // a factor of a hundred, silently.
 test("a decimal disguised as grouping is refused, not read a hundredfold", () => {
-  const wrongDot = parse("12.34", de);
-  assert.equal(wrongDot.ok, false);
-  assert.equal((wrongDot as { ok: false; reason: string }).reason, "bad-grouping");
-
-  const wrongComma = parse("12,34", eur);
-  assert.equal(wrongComma.ok, false);
-  assert.equal((wrongComma as { ok: false; reason: string }).reason, "bad-grouping");
+  assert.equal(failure("12.34", de), "bad-grouping");
+  assert.equal(failure("12,34", eur), "bad-grouping");
 
   // Real grouping still reads: the final group has three digits.
   assert.equal(amount("1.234", de).minor, 123400n);
@@ -84,9 +109,7 @@ test("what is not an amount comes back with a reason", () => {
     "1,2,3.4.5": "too-many-separators",
   };
   for (const [text, reason] of Object.entries(cases)) {
-    const result = parse(text, eur);
-    assert.equal(result.ok, false, `"${text}" was accepted`);
-    assert.equal((result as { ok: false; reason: string }).reason, reason, `for "${text}"`);
+    assert.equal(failure(text, eur), reason, `for "${text}"`);
   }
 });
 
@@ -121,9 +144,28 @@ test("an unfinished amount is incomplete, not invalid", () => {
     assert.equal(state.problem, null, `"${text}" should carry no error`);
   }
 
+  // The same half-typed group, written with the space fr-FR groups by.
+  for (const text of ["1 2", "1 23"]) {
+    const state = typed(text, fr);
+    assert.equal(state.incomplete, true, `"${text}" should be incomplete`);
+    assert.equal(state.problem, null, `"${text}" should carry no error`);
+  }
+
   const wrong = typed("12.345", eur);
   assert.equal(wrong.incomplete, false);
   assert.equal(wrong.problem, "too-many-decimals");
+});
+
+test("incompleteness is asked of the locale, not of a fixed set of shapes", () => {
+  assert.equal(isIncomplete("", eur), true);
+  assert.equal(isIncomplete("-", eur), true);
+  assert.equal(isIncomplete("1,", eur), true);
+  // "12." is twelve, so it is complete rather than unfinished.
+  assert.equal(isIncomplete("12.", eur), false);
+  assert.equal(isIncomplete("12.345", eur), false);
+  assert.equal(isIncomplete("abc", eur), false);
+  // A currency with no decimals has nothing to wait for after the separator.
+  assert.equal(isIncomplete("12.5", jpy), false);
 });
 
 // A separator with nothing after it yet is a complete amount, not a broken one:
@@ -136,6 +178,12 @@ test("a trailing separator reads as the whole amount", () => {
 
   const german = typed("12,", de);
   assert.equal(german.money?.minor, 1200n);
+});
+
+test("a half-typed fraction is read with the locale's decimal separator", () => {
+  assert.equal(typed("12,5", de).money?.minor, 1250n);
+  assert.equal(typed("12.5", eur).money?.minor, 1250n);
+  assert.equal(typed("1 234,56", fr).money?.minor, 123456n);
 });
 
 // Reformatting while someone types is what makes a field jump the caret.

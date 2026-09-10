@@ -20,6 +20,7 @@ $ npm run demo
 3. separators
    "1,234.56" en-US -> 1234.56
    "1.234,56" de-DE -> 1234.56
+   "1 234,56" fr-FR -> 1234.56
    same amount: true
 ```
 
@@ -33,7 +34,9 @@ rather than assumed to have two, because a wrong amount is worse than an error.
 
 **Separators.** `1.234,56` and `1,234.56` are the same amount written by two
 people. The separators come from `Intl`, so there is no table here to fall out
-of date. And a decimal disguised as grouping — `12.34` typed into a de-DE field —
+of date. A space is grouping too — fr-FR writes `1 234,56` — and it is read as
+grouping wherever it is typed, because it is a decimal point in no locale at
+all. And a decimal disguised as grouping — `12.34` typed into a de-DE field —
 is **refused** rather than read as 1234.00: a group separator is only stripped
 where the digits are actually grouped, final group of three, no group longer.
 
@@ -68,8 +71,11 @@ while typing : text="1234.5"   amount=123450 cents
 after blur   : text="1,234.50"
 ```
 
-**A trailing separator is a complete amount.** `12.` is twelve, not an error. It
-becomes `12.00` on blur.
+**Half-typed input is a state, not a mistake.** `12.` is twelve, and becomes
+`12.00` on blur. `12,5` in de-DE is twelve fifty while the last digit is still
+missing. `1 2` in fr-FR is a group that has not reached three digits yet, so it
+is unfinished rather than wrong — and the currency is never read out of the
+text, so a pasted `$12.34` in a EUR field is refused rather than believed.
 
 ## What it is not
 
@@ -88,7 +94,7 @@ feature: a silent default of two decimals is the bug it exists to prevent.
 
 | | |
 |---|---|
-| Core | exact parsing and formatting in minor units, locale separators via `Intl`, negative amounts, `Money` as `bigint` |
+| Core | exact parsing and formatting in minor units, locale separators via `Intl`, partial input while typing, negative amounts, `Money` as `bigint` |
 | Field | pure state machine: typing, blur, incomplete versus invalid, initial value |
 | React | `useAmountField` returning `inputProps`, tested with a real render |
 | Not yet | caret preservation when grouping is applied on every keystroke, a masked variant, per-field min and max, currency selection inside the field |
@@ -106,4 +112,4 @@ npm run typecheck
 
 ## License
 
-MIT
+MIT © [Shipmind Labs](https://shipmindlabs.com)

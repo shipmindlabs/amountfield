@@ -3,6 +3,12 @@
   "version": "0.0.0",
   "description": "A money input for React that keeps amounts in exact minor units and knows that not every currency has two decimals.",
   "license": "MIT",
+  "author": "Shipmind Labs <hello@shipmindlabs.com>",
+  "homepage": "https://github.com/shipmindlabs/amountfield",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/shipmindlabs/amountfield.git"
+  },
   "type": "module",
   "engines": {
     "node": ">=22.18"

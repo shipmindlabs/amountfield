@@ -7,7 +7,7 @@
  * what nobody tests when the logic only exists inside a component.
  */
 
-import { format, parse, type Money, type ParseFailure } from "./money.ts";
+import { format, isIncomplete, parse, type Money, type ParseFailure } from "./money.ts";
 
 export type FieldState = {
   /** What the input element shows. Always what the person typed, until blur. */
@@ -48,9 +48,9 @@ export function typed(text: string, options: FieldOptions): FieldState {
     return { text, money: result.money, problem: null, incomplete: false };
   }
 
-  // "12." and "" are not errors, they are unfinished. Showing a red border to
+  // "1 2" and "" are not errors, they are unfinished. Showing a red border to
   // someone who is still typing is the most common bug in these components.
-  if (result.reason === "empty" || isPrefixOfAnAmount(text, options)) {
+  if (isIncomplete(text, options)) {
     return { text, money: null, problem: null, incomplete: true };
   }
   return { text, money: null, problem: result.reason, incomplete: false };
@@ -63,15 +63,4 @@ export function typed(text: string, options: FieldOptions): FieldState {
 export function blurred(state: FieldState, options: FieldOptions): FieldState {
   if (!state.money) return state;
   return { ...state, text: format(state.money, { locale: options.locale }) };
-}
-
-/** Whether the text could still become a valid amount with more typing. */
-function isPrefixOfAnAmount(text: string, options: FieldOptions): boolean {
-  const trimmed = text.trim();
-  if (trimmed === "" || trimmed === "-") return true;
-  // "12." needs one more digit to parse; "1," needs three, because a group has
-  // to reach three digits before the grouping rule accepts it. So the question
-  // "could this still become an amount" is asked by finishing it every way a
-  // few keystrokes could.
-  return ["0", "00", "000"].some((completion) => parse(trimmed + completion, options).ok);
 }

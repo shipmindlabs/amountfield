@@ -9,6 +9,7 @@ import { blurred, typed } from "../src/index.ts";
 
 const eur = { currency: "EUR", locale: "en-US" };
 const de = { currency: "EUR", locale: "de-DE" };
+const fr = { currency: "EUR", locale: "fr-FR" };
 
 console.log("1. floats");
 const a = parse("0.10", eur);
@@ -41,10 +42,14 @@ console.log(`   XYZ            -> ${unknown}`);
 console.log("\n3. separators");
 const american = parse("1,234.56", eur);
 const german = parse("1.234,56", de);
-if (american.ok && german.ok) {
+const french = parse("1 234,56", fr);
+if (american.ok && german.ok && french.ok) {
   console.log(`   "1,234.56" en-US -> ${toDecimalString(american.money)}`);
   console.log(`   "1.234,56" de-DE -> ${toDecimalString(german.money)}`);
-  console.log(`   same amount: ${american.money.minor === german.money.minor}`);
+  console.log(`   "1 234,56" fr-FR -> ${toDecimalString(french.money)}`);
+  const same =
+    american.money.minor === german.money.minor && german.money.minor === french.money.minor;
+  console.log(`   same amount: ${same}`);
 }
 
 console.log("\n4. typing, then leaving the field");
@@ -54,6 +59,10 @@ state = blurred(state, eur);
 console.log(`   after blur   : text="${state.text}"`);
 const halfway = typed("-", eur);
 console.log(`   just a minus : incomplete=${halfway.incomplete} error=${halfway.problem}`);
+const halfFraction = typed("12,5", de);
+console.log(`   "12,5" in de-DE: ${halfFraction.money?.minor} cents, error=${halfFraction.problem}`);
+const halfGroup = typed("1 2", fr);
+console.log(`   "1 2" in fr-FR : incomplete=${halfGroup.incomplete} error=${halfGroup.problem}`);
 const wrong = typed("12.345", eur);
 console.log(`   three decimals: error=${wrong.problem}`);
 console.log(`\n   formatted with currency: ${state.money ? format(state.money, { locale: "de-DE", withCurrency: true }) : ""}`);
