@@ -7,6 +7,7 @@
  * what nobody tests when the logic only exists inside a component.
  */
 
+import type { ExponentOverride } from "./exponents.ts";
 import { format, isIncomplete, parse, type Money, type ParseFailure } from "./money.ts";
 
 export type FieldState = {
@@ -23,7 +24,7 @@ export type FieldState = {
 export type FieldOptions = {
   readonly currency: string;
   readonly locale?: string;
-  readonly exponent?: number;
+  readonly exponent?: ExponentOverride;
 };
 
 /** A fresh field, optionally holding an amount already. */

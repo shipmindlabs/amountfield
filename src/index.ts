@@ -6,12 +6,18 @@
 export {
   EXPONENTS,
   exponentOf,
+  MissingCurrency,
+  UnknownCurrency,
+  type ExponentOverride,
+  type Exponents,
+} from "./exponents.ts";
+
+export {
   format,
   isIncomplete,
   parse,
   separatorsFor,
   toDecimalString,
-  UnknownCurrency,
   type FormatOptions,
   type Money,
   type ParseFailure,

@@ -16,6 +16,7 @@ $ npm run demo
    JPY 1200   ->   1200 minor units (exponent 0)
    KWD 1.234  ->   1234 minor units (exponent 3)
    XYZ            -> unknown currency "XYZ"
+   XYZ 1.234  ->   1234 minor units (exponent 3, yours)
 
 3. separators
    "1,234.56" en-US -> 1234.56
@@ -60,6 +61,22 @@ function PriceField() {
 *not finished yet* from *wrong*, which is the difference between a calm field
 and one that turns red between the `.` and the `5` of `12.50`.
 
+## The currency, and its exponent
+
+The currency code is required — there is nothing sensible to fall back to — and
+its exponent comes from a bundled ISO 4217 table: JPY 0, KWD 3, CLF 4, and the
+codes most products meet. A code the table does not carry is refused, and the
+override takes whichever shape the caller has:
+
+```ts
+parse("10.000", { currency: "XYZ", exponent: 3 });                    // this one currency
+parse("10.000", { currency: "XYZ", exponent: { XYZ: 3 } });           // your own table
+parse("10.000", { currency: "XYZ", exponent: (code) => mine[code] }); // your own lookup
+```
+
+A lookup that returns `undefined` falls back to the bundled table, so a hook can
+add currencies without restating the ones that are already right.
+
 ## Two behaviours worth knowing
 
 **The text is never rewritten while you type.** Reformatting mid-entry is what
@@ -94,7 +111,7 @@ feature: a silent default of two decimals is the bug it exists to prevent.
 
 | | |
 |---|---|
-| Core | exact parsing and formatting in minor units, locale separators via `Intl`, partial input while typing, negative amounts, `Money` as `bigint` |
+| Core | exact parsing and formatting in minor units, ISO 4217 exponents with an explicit override, locale separators via `Intl`, partial input while typing, negative amounts, `Money` as `bigint` |
 | Field | pure state machine: typing, blur, incomplete versus invalid, initial value |
 | React | `useAmountField` returning `inputProps`, tested with a real render |
 | Not yet | caret preservation when grouping is applied on every keystroke, a masked variant, per-field min and max, currency selection inside the field |

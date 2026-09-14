@@ -13,6 +13,8 @@
  *      off by a factor of a hundred.
  */
 
+import { exponentOf, normalizeCurrency, type ExponentOverride } from "./exponents.ts";
+
 /** An exact amount: minor units, and how many of them make one major unit. */
 export type Money = {
   /** Cents, satoshi, yen — whatever the currency's smallest unit is. */
@@ -20,44 +22,6 @@ export type Money = {
   readonly currency: string;
   readonly exponent: number;
 };
-
-/**
- * ISO 4217 exponents for the currencies this ships with.
- *
- * The list is short on purpose. An unknown currency is refused rather than
- * assumed to have two decimals, because that assumption is exactly what breaks
- * on JPY — and a wrong amount is worse than an error message.
- */
-export const EXPONENTS: Readonly<Record<string, number>> = {
-  EUR: 2, USD: 2, GBP: 2, CHF: 2, PLN: 2, CZK: 2, SEK: 2, NOK: 2, DKK: 2,
-  CAD: 2, AUD: 2, NZD: 2, SGD: 2, HKD: 2, CNY: 2, INR: 2, BRL: 2, MXN: 2,
-  ZAR: 2, TRY: 2, AED: 2, SAR: 2, ILS: 2, RON: 2, HUF: 2, BGN: 2, UAH: 2,
-  JPY: 0, KRW: 0, CLP: 0, ISK: 0, VND: 0,
-  BHD: 3, KWD: 3, OMR: 3, JOD: 3, TND: 3,
-};
-
-export class UnknownCurrency extends Error {
-  readonly currency: string;
-  constructor(currency: string) {
-    super(
-      `unknown currency "${currency}": pass its ISO 4217 exponent explicitly. ` +
-        `Assuming two decimals is what breaks on JPY (0) and KWD (3).`,
-    );
-    this.currency = currency;
-  }
-}
-
-export function exponentOf(currency: string, override?: number): number {
-  if (override !== undefined) {
-    if (!Number.isInteger(override) || override < 0 || override > 6) {
-      throw new RangeError(`exponent ${override} is not a plausible ISO 4217 exponent`);
-    }
-    return override;
-  }
-  const known = EXPONENTS[currency.toUpperCase()];
-  if (known === undefined) throw new UnknownCurrency(currency);
-  return known;
-}
 
 /** How a locale writes numbers. */
 export type Separators = {
@@ -88,10 +52,11 @@ export function separatorsFor(locale: string): Separators {
 }
 
 export type ParseOptions = {
+  /** Required: the exponent follows from it, and there is no default. */
   readonly currency: string;
   readonly locale?: string;
-  /** For a currency not in the table, or to override it. */
-  readonly exponent?: number;
+  /** For a currency the bundled table does not carry, or to overrule it. */
+  readonly exponent?: ExponentOverride;
 };
 
 export type ParseResult =
@@ -120,7 +85,8 @@ export type ParseFailure =
  * rather than quietly turned into dollars.
  */
 export function parse(text: string, options: ParseOptions): ParseResult {
-  const exponent = exponentOf(options.currency, options.exponent);
+  const currency = normalizeCurrency(options.currency);
+  const exponent = exponentOf(currency, options.exponent);
   const { decimal, group } = separatorsFor(options.locale ?? "en-US");
 
   let cleaned = text.trim();
@@ -169,7 +135,7 @@ export function parse(text: string, options: ParseOptions): ParseResult {
 
   const digits = (whole || "0") + fraction.padEnd(exponent, "0");
   const minor = BigInt(digits) * (negative ? -1n : 1n);
-  return { ok: true, money: { minor, currency: options.currency.toUpperCase(), exponent } };
+  return { ok: true, money: { minor, currency, exponent } };
 }
 
 /**

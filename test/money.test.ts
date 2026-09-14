@@ -1,13 +1,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
+import { exponentOf, UnknownCurrency } from "../src/exponents.ts";
 import {
-  exponentOf,
   format,
   isIncomplete,
   parse,
   toDecimalString,
-  UnknownCurrency,
   type Money,
 } from "../src/money.ts";
 import { blurred, initial, typed, type FieldOptions } from "../src/field.ts";

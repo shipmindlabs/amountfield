@@ -38,6 +38,13 @@ const unknown = (() => {
   }
 })();
 console.log(`   XYZ            -> ${unknown}`);
+const overridden = parse("1.234", { currency: "XYZ", exponent: { XYZ: 3 } });
+if (overridden.ok) {
+  console.log(
+    `   XYZ ${"1.234".padEnd(6)} -> ${String(overridden.money.minor).padStart(6)} minor units` +
+      ` (exponent ${overridden.money.exponent}, yours)`,
+  );
+}
 
 console.log("\n3. separators");
 const american = parse("1,234.56", eur);
