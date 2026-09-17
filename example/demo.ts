@@ -4,8 +4,9 @@
  *   npm run demo
  */
 
-import { format, parse, toDecimalString } from "../src/index.ts";
+import { add, allocate, format, multiply, parse, toDecimalString } from "../src/index.ts";
 import { blurred, typed } from "../src/index.ts";
+import type { Money } from "../src/index.ts";
 
 const eur = { currency: "EUR", locale: "en-US" };
 const de = { currency: "EUR", locale: "de-DE" };
@@ -73,3 +74,27 @@ console.log(`   "1 2" in fr-FR : incomplete=${halfGroup.incomplete} error=${half
 const wrong = typed("12.345", eur);
 console.log(`   three decimals: error=${wrong.problem}`);
 console.log(`\n   formatted with currency: ${state.money ? format(state.money, { locale: "de-DE", withCurrency: true }) : ""}`);
+
+console.log("\n5. arithmetic, and the cent that usually goes missing");
+const total = (parts: readonly Money[]): bigint =>
+  parts.reduce((carried, part) => carried + part.minor, 0n);
+const fiveCents = parse("0.05", eur);
+if (fiveCents.ok) {
+  const thirds = allocate(fiveCents.money, 3);
+  const weighted = allocate(fiveCents.money, [3, 7]);
+  console.log(`   5 cents in 3   : ${thirds.map((p) => p.minor).join(" + ")} = ${total(thirds)}`);
+  console.log(`   5 cents by 3:7 : ${weighted.map((p) => p.minor).join(" + ")} = ${total(weighted)}`);
+}
+const invoice = parse("99.99", eur);
+if (invoice.ok) {
+  const vat = multiply(invoice.money, "0.19", "half-even");
+  console.log(
+    `   99.99 + 19% VAT: ${toDecimalString(add(invoice.money, vat))}` +
+      ` (VAT ${toDecimalString(vat)})`,
+  );
+  try {
+    multiply(invoice.money, "0.19");
+  } catch (error) {
+    console.log(`   without a mode : ${(error as Error).message.split(";")[0]}`);
+  }
+}

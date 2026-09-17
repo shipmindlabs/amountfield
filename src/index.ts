@@ -26,6 +26,20 @@ export {
   type Separators,
 } from "./money.ts";
 
+export {
+  add,
+  allocate,
+  multiply,
+  subtract,
+  CurrencyMismatch,
+  ExponentMismatch,
+  InexactAmount,
+  InexactRatio,
+  type Fraction,
+  type Ratio,
+  type Rounding,
+} from "./arithmetic.ts";
+
 export { blurred, initial, typed, type FieldOptions, type FieldState } from "./field.ts";
 
 export {
