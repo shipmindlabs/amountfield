@@ -40,7 +40,15 @@ export {
   type Rounding,
 } from "./arithmetic.ts";
 
-export { blurred, initial, typed, type FieldOptions, type FieldState } from "./field.ts";
+export {
+  blurred,
+  caretAfter,
+  initial,
+  sanitise,
+  typed,
+  type FieldOptions,
+  type FieldState,
+} from "./field.ts";
 
 export {
   useAmountField,

@@ -59,7 +59,9 @@ function PriceField() {
 
 `field.money` is the exact amount or `null`. `field.incomplete` distinguishes
 *not finished yet* from *wrong*, which is the difference between a calm field
-and one that turns red between the `.` and the `5` of `12.50`.
+and one that turns red between the `.` and the `5` of `12.50`. Spread
+`inputProps` rather than picking fields out of it: the `ref` it carries is how
+the caret gets put back after the text is rewritten.
 
 ## The currency, and its exponent
 
@@ -77,7 +79,7 @@ parse("10.000", { currency: "XYZ", exponent: (code) => mine[code] }); // your ow
 A lookup that returns `undefined` falls back to the bundled table, so a hook can
 add currencies without restating the ones that are already right.
 
-## Two behaviours worth knowing
+## Four behaviours worth knowing
 
 **The text is never rewritten while you type.** Reformatting mid-entry is what
 makes a field jump the caret and eat a digit. Grouping is applied on blur, when
@@ -93,6 +95,20 @@ after blur   : text="1,234.50"
 missing. `1 2` in fr-FR is a group that has not reached three digits yet, so it
 is unfinished rather than wrong — and the currency is never read out of the
 text, so a pasted `$12.34` in a EUR field is refused rather than believed.
+
+**The caret survives the rewrites there are.** Text does get rewritten — blur
+applies grouping, a pasted symbol disappears — and a field that then drops the
+caret at the end is worse than one that never reformats at all. The caret is put
+back after the same digits it was after before, so `1234.5|` becomes `1,234.5|0`
+rather than `1,234.50|`, and a caret in front of the number is still in front of
+it once the number has grown a group separator.
+
+**A paste is cleaned up, not translated.** `€ 1.234,56` copied out of an invoice
+loses the symbol and the non-breaking space behind it, `−45,60` loses the minus
+sign that is not the ASCII one, and the digits are read by the locale as always.
+Only the field's own currency is stripped, by symbol or by code: `$12.34` in a
+EUR field still has a dollar sign in it, and is refused rather than quietly
+taken for euros.
 
 ## Arithmetic
 
@@ -140,9 +156,9 @@ feature: a silent default of two decimals is the bug it exists to prevent.
 |---|---|
 | Core | exact parsing and formatting in minor units, ISO 4217 exponents with an explicit override, locale separators via `Intl`, partial input while typing, negative amounts, `Money` as `bigint` |
 | Arithmetic | `add`, `subtract`, `multiply` by an exact ratio with an explicit rounding mode, and `allocate` by largest remainder |
-| Field | pure state machine: typing, blur, incomplete versus invalid, initial value |
-| React | `useAmountField` returning `inputProps`, tested with a real render |
-| Not yet | caret preservation when grouping is applied on every keystroke, a masked variant, per-field min and max, currency selection inside the field |
+| Field | pure state machine: typing, blur, incomplete versus invalid, initial value, the caret kept across a rewrite, a paste stripped of the field's own currency and of a unicode minus |
+| React | `useAmountField` returning `inputProps`, including the `ref` the caret is restored through, tested with a real render |
+| Not yet | a masked variant, per-field min and max, currency selection inside the field |
 
 The core is dependency-free and covers everything worth testing; the hook is
 deliberately thin so there is nothing in it to get wrong.
