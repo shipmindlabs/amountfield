@@ -1,5 +1,5 @@
 /**
- * amountfield — a money input for React that never holds a float and never
+ * amountfield \u2014 a money input for React that never holds a float and never
  * assumes a currency has two decimals.
  */
 
@@ -25,6 +25,15 @@ export {
   type ParseResult,
   type Separators,
 } from "./money.ts";
+
+export {
+  display,
+  placementOf,
+  type CurrencyDisplay,
+  type DisplayOptions,
+  type NegativeStyle,
+  type Placement,
+} from "./display.ts";
 
 export {
   add,
