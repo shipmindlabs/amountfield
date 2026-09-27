@@ -110,6 +110,36 @@ Only the field's own currency is stripped, by symbol or by code: `$12.34` in a
 EUR field still has a dollar sign in it, and is refused rather than quietly
 taken for euros.
 
+## Showing an amount
+
+Holding an amount and showing one are different jobs. A field's own text carries
+no currency, because a symbol written into the value fights the person typing; a
+table, an invoice or a total is `display`:
+
+```ts
+import { display, placementOf } from "amountfield";
+
+display(price, { locale: "en-US" });                          // "€1,234.50"
+display(price, { locale: "de-DE" });                          // "1.234,50 €"
+display(refund, { locale: "en-US", negative: "accounting" }); // "(1,234.50)"
+display(fee, { locale: "en-US", currencyDisplay: "narrowSymbol" });  // CAD as "$"
+placementOf("EUR", { locale: "de-DE" });
+// { mark: "€", position: "after", spacing: "\u00a0" }
+```
+
+Where the mark goes is the locale's answer rather than a table here, and so is
+how a negative amount is written: `accounting` asks for the local convention —
+parentheses in en-US, a minus in de-DE — rather than putting a German balance
+sheet in American brackets. The decimals shown are the amount's own, so a JPY
+total is not given the two `Intl` assumes for the code, and an overridden
+exponent is shown as the override says. `placementOf` hands back the pieces for a
+caller laying them out itself — a symbol in its own column, digits right-aligned
+beside it.
+
+It goes one way only. The value stays in minor units, nothing here is ever read
+back, and a display string pasted into a field is refused there rather than
+half-understood.
+
 ## Arithmetic
 
 Amounts add up as whole minor units, so a total cannot drift. Splitting one is
@@ -155,6 +185,7 @@ feature: a silent default of two decimals is the bug it exists to prevent.
 | | |
 |---|---|
 | Core | exact parsing and formatting in minor units, ISO 4217 exponents with an explicit override, locale separators via `Intl`, partial input while typing, negative amounts, `Money` as `bigint` |
+| Display | `display` with the locale's symbol placement, accounting negatives, narrow symbols and the amount's own decimals; `placementOf` for laying the pieces out by hand |
 | Arithmetic | `add`, `subtract`, `multiply` by an exact ratio with an explicit rounding mode, and `allocate` by largest remainder |
 | Field | pure state machine: typing, blur, incomplete versus invalid, initial value, the caret kept across a rewrite, a paste stripped of the field's own currency and of a unicode minus |
 | React | `useAmountField` returning `inputProps`, including the `ref` the caret is restored through, tested with a real render |

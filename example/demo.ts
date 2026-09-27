@@ -4,7 +4,16 @@
  *   npm run demo
  */
 
-import { add, allocate, format, multiply, parse, toDecimalString } from "../src/index.ts";
+import {
+  add,
+  allocate,
+  display,
+  format,
+  multiply,
+  parse,
+  placementOf,
+  toDecimalString,
+} from "../src/index.ts";
 import { blurred, typed } from "../src/index.ts";
 import type { Money } from "../src/index.ts";
 
@@ -97,4 +106,32 @@ if (invoice.ok) {
   } catch (error) {
     console.log(`   without a mode : ${(error as Error).message.split(";")[0]}`);
   }
+}
+
+console.log("\n6. showing it, which is not the same as holding it");
+const price = parse("1234.50", eur);
+const refund = parse("-1234.50", eur);
+if (price.ok && refund.ok) {
+  console.log(`   en-US            : ${display(price.money, { locale: "en-US" })}`);
+  console.log(`   de-DE            : ${display(price.money, { locale: "de-DE" })}`);
+  const where = placementOf("EUR", { locale: "de-DE" });
+  console.log(`   de-DE writes "${where.mark}" ${where.position} the digits`);
+  console.log(`   minus            : ${display(refund.money, { locale: "en-US" })}`);
+  console.log(
+    `   accounting en-US : ${display(refund.money, { locale: "en-US", negative: "accounting" })}`,
+  );
+  console.log(
+    `   accounting de-DE : ${display(refund.money, { locale: "de-DE", negative: "accounting" })}`,
+  );
+  const fee: Money = { minor: 123450n, currency: "CAD", exponent: 2 };
+  console.log(`   CAD symbol       : ${display(fee, { locale: "en-US" })}`);
+  console.log(
+    `   CAD narrow       : ${display(fee, { locale: "en-US", currencyDisplay: "narrowSymbol" })}`,
+  );
+  console.log(
+    `   JPY has no cents : ${display({ minor: 1200n, currency: "JPY", exponent: 0 }, { locale: "ja-JP" })}`,
+  );
+  // And what was shown does not come back: a display string is refused by a field.
+  const pastedBack = typed(display(refund.money, { locale: "en-US", negative: "accounting" }), eur);
+  console.log(`   pasted back      : error=${pastedBack.problem}`);
 }
