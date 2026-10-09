@@ -63,12 +63,55 @@ and one that turns red between the `.` and the `5` of `12.50`. Spread
 `inputProps` rather than picking fields out of it: the `ref` it carries is how
 the caret gets put back after the text is rewritten.
 
-## The currency, and its exponent
+## The money model
 
-The currency code is required — there is nothing sensible to fall back to — and
-its exponent comes from a bundled ISO 4217 table: JPY 0, KWD 3, CLF 4, and the
-codes most products meet. A code the table does not carry is refused, and the
-override takes whichever shape the caller has:
+An amount is three things, and all three travel together:
+
+```ts
+type Money = {
+  readonly minor: bigint;    // 1234
+  readonly currency: string; // "EUR"
+  readonly exponent: number; // 2
+};
+```
+
+**Minor units, because money is counted rather than measured.** There is no such
+thing as half a cent in a ledger, so the value is a whole number of the
+currency's smallest unit — cents, yen, fils — and never a fraction of a major
+one. `0.1 + 0.2` is a famous example, but the expensive version is dull: a
+hundred invoice lines, each off by less than a cent, and a total that disagrees
+with the sum of its own rows. A sum of integers cannot do that. Nothing in this
+library converts an amount to `number`, including `format`, which hands `Intl` a
+decimal string.
+
+**The exponent, because the count on its own is ambiguous.** `1234` minor units
+is three different amounts:
+
+| currency | exponent | `1234` minor units is | and `"1200"` typed is |
+|---|---|---|---|
+| JPY | 0 | ¥1,234 | 1200 minor units |
+| EUR | 2 | €12.34 | 120000 minor units |
+| KWD | 3 | 1.234 KWD | 1200000 minor units |
+
+So the exponent is carried on the amount rather than looked up again wherever the
+amount lands. It is also why `add` refuses two amounts whose exponents differ
+even when the codes match: one of them came from an override, and the two numbers
+are a factor of a hundred apart.
+
+**No default, because the only safe default is an error.** The currency is a
+required option, and a code the bundled ISO 4217 table does not carry is refused.
+These two refusals `throw` rather than coming back as a parse failure, because
+they are mistakes in the calling code and not something the person typing can fix:
+
+```ts
+parse("10.00", { currency: "" });    // MissingCurrency
+parse("10.00", { currency: "XYZ" }); // UnknownCurrency
+```
+
+The table ships JPY 0, KWD 3, CLF 4 and the codes most products meet — one in
+three of them is not two decimals, which is the whole reason guessing is not an
+option. For a code it does not carry, or to overrule one it does, the override
+takes whichever shape the caller has:
 
 ```ts
 parse("10.000", { currency: "XYZ", exponent: 3 });                    // this one currency
@@ -77,7 +120,141 @@ parse("10.000", { currency: "XYZ", exponent: (code) => mine[code] }); // your ow
 ```
 
 A lookup that returns `undefined` falls back to the bundled table, so a hook can
-add currencies without restating the ones that are already right.
+add currencies without restating the ones that are already right. `useAmountField`
+takes the same `exponent` option and passes it through, so a field for a currency
+the table has never heard of needs no fork.
+
+### The JPY bug
+
+Every money field starts life as this line:
+
+```ts
+const minor = Math.round(Number(text) * 100); // the bug
+```
+
+In a EUR or USD field it is right, which is exactly why it ships. Then the
+product opens in Tokyo:
+
+- Someone types `1200` into a JPY field. The line makes it `120000`, and a
+  payment API that counts minor units — as they do — charges **¥120,000 for a
+  ¥1,200 order**. Not a rounding error: a factor of a hundred.
+- The same mistake run backwards is a ¥1,200 balance displayed as `12.00`, and a
+  support ticket nobody can reproduce in euros.
+- Kuwait is worse because it is quieter. `1.234` KWD is 1234 fils; the line
+  computes `123.4`, rounds it to `123`, and the amount is now a tenth of what was
+  typed with the rounding politely hiding the lost digit.
+
+Here the exponent comes from the currency before any arithmetic happens, and
+`"1200"` in a JPY field is 1200 minor units because JPY's exponent is 0. There is
+no `* 100` anywhere in the library, and no `/ 100` on the way back out:
+`toDecimalString` moves the decimal point through the digits as text.
+
+JPY is not an exotic case to handle later. The bundled table alone carries
+sixteen currencies with no decimals — BIF, CLP, DJF, GNF, ISK, JPY, KMF, KRW,
+PYG, RWF, UGX, VND, VUV, XAF, XOF, XPF — and seven with three. A field that
+assumes two is wrong in a third of the world and silent about it.
+
+## Wiring it into a form library
+
+The hook owns the text in the input; the form owns the amount. That split is
+what keeps the caret and the half-typed states working, and it has one
+consequence: `register()`-style uncontrolled binding will not do. The input is
+controlled, its `onChange` carries the caret position, and the value the form
+wants is a `Money`, not a string. So bind it through a controlled adapter —
+`Controller` in react-hook-form, `useField` in Formik, whatever the library calls
+it:
+
+```tsx
+import { useEffect, useRef } from "react";
+import { Controller, useForm } from "react-hook-form";
+import { useAmountField, type Money } from "amountfield";
+
+const same = (left: Money | null, right: Money | null) =>
+  left?.minor === right?.minor && left?.currency === right?.currency;
+
+function AmountInput({
+  value,
+  onChange,
+}: {
+  value: Money | null;
+  onChange: (money: Money | null) => void;
+}) {
+  const field = useAmountField({ currency: "EUR", locale: "de-DE" }, value ?? undefined);
+  const agreed = useRef(value);
+
+  // Outwards: the text turned into a different amount. Comparing first means a
+  // keystroke that leaves the amount alone — or the grouping blur adds — does
+  // not mark the form dirty.
+  useEffect(() => {
+    if (same(field.money, agreed.current)) return;
+    agreed.current = field.money;
+    onChange(field.money);
+  }, [field.money, onChange]);
+
+  // Inwards: the form was reset. The second argument to the hook is the initial
+  // amount and is read once, so one that arrives later is pushed in.
+  useEffect(() => {
+    if (same(value, agreed.current)) return;
+    agreed.current = value;
+    field.setMoney(value);
+  }, [value, field.setMoney]);
+
+  return (
+    <>
+      <input {...field.inputProps} name="price" />
+      {field.problem && <span role="alert">{MESSAGES[field.problem]}</span>}
+    </>
+  );
+}
+
+function OrderForm() {
+  const { control, handleSubmit } = useForm<{ price: Money | null }>();
+  return (
+    <form onSubmit={handleSubmit(submit)}>
+      <Controller
+        name="price"
+        control={control}
+        defaultValue={null}
+        rules={{ validate: (money) => money !== null || "enter an amount" }}
+        render={({ field }) => <AmountInput value={field.value} onChange={field.onChange} />}
+      />
+    </form>
+  );
+}
+```
+
+Spread `inputProps` first and add your own `name`, `id` or `onFocus` after it;
+do not replace the `ref`, the `value` or the `onChange`, which are how the caret
+survives a rewrite.
+
+**Required is the form's rule, not the field's.** An empty field is unfinished
+rather than wrong, so `field.problem` is `null` and nothing is marked invalid
+while the person has not started. Emptiness becomes an error when the form is
+submitted, which is where `validate` above puts it.
+
+**The messages are yours.** `field.problem` is a reason code, so the copy can be
+written and translated where the rest of the copy lives:
+
+| reason | what it means |
+|---|---|
+| `too-many-decimals` | more decimals than the currency has: `12.5` in JPY, `1.2345` in KWD |
+| `too-many-separators` | two decimal points in one number |
+| `bad-grouping` | a group separator where the digits are not grouped: `12 3456` |
+| `not-a-number` | characters an amount cannot contain, including a currency that is not the field's |
+| `empty` | nothing to read — `parse` only; a field reports this as incomplete |
+
+**Submit the minor units, not a decimal.** `JSON.stringify` throws on a `bigint`,
+which is a useful nudge: send the count as a string and the exponent beside it,
+and the other end needs no opinion about how many decimals the currency has.
+
+```ts
+const submit = ({ price }: { price: Money }) =>
+  post("/orders", {
+    amount: String(price.minor), // "123450"
+    currency: price.currency,
+    exponent: price.exponent,
+  });
+```
 
 ## Four behaviours worth knowing
 
