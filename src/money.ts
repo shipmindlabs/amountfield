@@ -29,13 +29,30 @@ export type Separators = {
   readonly decimal: string;
   /** Between groups of thousands. May be empty. */
   readonly group: string;
+  /** The locale's ten digits in order: "0123456789", or the Arabic-Indic ones. */
+  readonly digits: string;
+  /** The minus this locale writes, without the bidi marks Intl emits with it. */
+  readonly minus: string;
 };
+
+const ASCII_DIGITS = "0123456789";
+
+// Intl writes these around a number inside right-to-left text so that it reads
+// in the right direction. They are invisible and carry no value, so what
+// `format` wrote holds them and what `parse` reads back must not.
+const BIDI = /[\u200E\u200F\u061C\u2066-\u2069]/g;
+
+/** Text without the bidi marks Intl emits around a formatted number. */
+export function withoutBidi(text: string): string {
+  return text.replace(BIDI, "");
+}
 
 const separators = new Map<string, Separators>();
 
 /**
- * Read the separators a locale actually uses, from the platform rather than a
- * table this library would have to maintain and get wrong.
+ * Read how a locale writes numbers — its separators, its digits and its minus
+ * sign — from the platform rather than a table this library would have to
+ * maintain and get wrong.
  */
 export function separatorsFor(locale: string): Separators {
   // Parsing runs on every keystroke, and building the formatter is the
@@ -44,11 +61,42 @@ export function separatorsFor(locale: string): Separators {
   if (known) return known;
 
   const parts = new Intl.NumberFormat(locale, { useGrouping: true }).formatToParts(1234567.8);
-  const decimal = parts.find((part) => part.type === "decimal")?.value ?? ".";
-  const group = parts.find((part) => part.type === "group")?.value ?? "";
-  const found = { decimal, group };
+  const decimal = withoutBidi(parts.find((part) => part.type === "decimal")?.value ?? ".");
+  const group = withoutBidi(parts.find((part) => part.type === "group")?.value ?? "");
+
+  const plain = new Intl.NumberFormat(locale, { useGrouping: false });
+  let written = "";
+  for (let digit = 0; digit <= 9; digit++) written += withoutBidi(plain.format(digit));
+  const sign = plain.formatToParts(-1).find((part) => part.type === "minusSign")?.value;
+
+  const found = {
+    decimal,
+    group,
+    // A numbering system whose digits were not one character each would make the
+    // mapping in asciiNumerals misread an amount rather than refuse it.
+    digits: written.length === 10 ? written : ASCII_DIGITS,
+    minus: withoutBidi(sign ?? "-") || "-",
+  };
   separators.set(locale, found);
   return found;
+}
+
+/**
+ * The text in the form the rules below read: no bidi marks, the locale's minus
+ * written as the ASCII one, and its digits as ASCII digits. ASCII digits are
+ * left alone, so both forms are read wherever they are typed.
+ */
+function asciiNumerals(text: string, { digits, minus }: Separators): string {
+  let plain = withoutBidi(text);
+  if (minus !== "-" && minus !== "") plain = plain.split(minus).join("-");
+  if (digits === ASCII_DIGITS) return plain;
+
+  let mapped = "";
+  for (const char of plain) {
+    const digit = digits.indexOf(char);
+    mapped += digit === -1 ? char : ASCII_DIGITS[digit];
+  }
+  return mapped;
 }
 
 export type ParseOptions = {
@@ -87,9 +135,12 @@ export type ParseFailure =
 export function parse(text: string, options: ParseOptions): ParseResult {
   const currency = normalizeCurrency(options.currency);
   const exponent = exponentOf(currency, options.exponent);
-  const { decimal, group } = separatorsFor(options.locale ?? "en-US");
+  const locale = separatorsFor(options.locale ?? "en-US");
+  const { decimal, group } = locale;
 
-  let cleaned = text.trim();
+  // The locale's own digits and minus sign are what `format` wrote, so they are
+  // read here as well as the ASCII ones.
+  let cleaned = asciiNumerals(text, locale).trim();
   if (cleaned === "") return { ok: false, reason: "empty" };
 
   const negative = cleaned.startsWith("-");
@@ -150,9 +201,10 @@ export function isIncomplete(text: string, options: ParseOptions): boolean {
   if (parse(text, options).ok) return false;
 
   const exponent = exponentOf(options.currency, options.exponent);
-  const { decimal, group } = separatorsFor(options.locale ?? "en-US");
+  const locale = separatorsFor(options.locale ?? "en-US");
+  const { decimal, group } = locale;
 
-  let rest = text.trim();
+  let rest = asciiNumerals(text, locale).trim();
   if (rest === "") return true;
   if (rest.startsWith("-")) rest = rest.slice(1).trim();
   if (rest === "") return true;

@@ -13,8 +13,10 @@ import {
   isIncomplete,
   parse,
   separatorsFor,
+  withoutBidi,
   type Money,
   type ParseFailure,
+  type Separators,
 } from "./money.ts";
 
 export type FieldState = {
@@ -83,7 +85,12 @@ export function blurred(state: FieldState, options: FieldOptions): FieldState {
 
 /**
  * Strip what a paste carries and an amount does not: the field's own currency,
- * a minus sign that is not the ASCII one, a space in front of the number.
+ * a minus sign that is not the ASCII one, the bidi marks Intl writes around a
+ * number in right-to-left text, a space in front of the number.
+ *
+ * The digits stay as they were written, in the locale's own numbering system or
+ * in ASCII, because parsing reads both and rewriting someone's digits under
+ * their caret is not sanitising.
  *
  * Only the field's own currency is removed. The currency is never read out of
  * the text, so a dollar sign in a EUR field stays in the string and is refused
@@ -92,8 +99,10 @@ export function blurred(state: FieldState, options: FieldOptions): FieldState {
 export function sanitise(text: string, options: FieldOptions): string {
   const currency = normalizeCurrency(options.currency);
   const locale = options.locale ?? "en-US";
+  const { minus } = separatorsFor(locale);
 
-  let cleaned = text.replace(MINUS, "-");
+  let cleaned = withoutBidi(text).replace(MINUS, "-");
+  if (minus !== "-" && minus !== "") cleaned = cleaned.split(minus).join("-");
   for (const mark of marksFor(currency, locale)) cleaned = cleaned.split(mark).join("");
   cleaned = cleaned.replace(new RegExp(currency, "gi"), "");
 
@@ -118,32 +127,38 @@ export function caretAfter(
 ): number {
   if (before === after) return Math.max(0, Math.min(caret, after.length));
 
-  const { decimal } = separatorsFor(options.locale ?? "en-US");
+  const locale = separatorsFor(options.locale ?? "en-US");
   const upto = Math.max(0, Math.min(caret, before.length));
 
   let wanted = 0;
   for (let index = 0; index < upto; index++) {
-    if (meaningful(before[index], decimal)) wanted++;
+    if (meaningful(before[index], locale)) wanted++;
   }
 
   if (wanted === 0) {
     for (let index = 0; index < after.length; index++) {
-      if (meaningful(after[index], decimal)) return index;
+      if (meaningful(after[index], locale)) return index;
     }
     return 0;
   }
 
   let seen = 0;
   for (let index = 0; index < after.length; index++) {
-    if (!meaningful(after[index], decimal)) continue;
+    if (!meaningful(after[index], locale)) continue;
     seen++;
     if (seen === wanted) return index + 1;
   }
   return after.length;
 }
 
-function meaningful(char: string, decimal: string): boolean {
-  return char === "-" || char === decimal || (char >= "0" && char <= "9");
+function meaningful(char: string, locale: Separators): boolean {
+  return (
+    char === "-" ||
+    char === locale.minus ||
+    char === locale.decimal ||
+    (char >= "0" && char <= "9") ||
+    locale.digits.includes(char)
+  );
 }
 
 // The minus a spreadsheet, a PDF or a Japanese keyboard writes.
@@ -164,7 +179,13 @@ function marksFor(currency: string, locale: string): readonly string[] {
       currency,
       currencyDisplay,
     }).formatToParts(0);
-    for (const part of parts) if (part.type === "currency") found.add(part.value);
+    for (const part of parts) {
+      if (part.type !== "currency") continue;
+      // Without the bidi marks, because the text these are removed from has had
+      // its own dropped already.
+      const mark = withoutBidi(part.value);
+      if (mark) found.add(mark);
+    }
   }
 
   // Longest first, so "F CFA" is not left as a stray "F" by removing "CFA".

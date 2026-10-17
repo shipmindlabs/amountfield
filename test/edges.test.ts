@@ -1,7 +1,7 @@
 /**
  * The edges a money field meets in the world: a currency with no decimals, one
  * with three, an amount pasted out of an invoice with the symbol still on it,
- * and digits that are not the ASCII ones.
+ * and a locale that writes its own digits.
  *
  * These are the cases a field that assumed two decimals, a dot and Latin digits
  * gets wrong quietly, which is the only way getting it wrong really matters.
@@ -31,6 +31,11 @@ function failure(text: string, options: FieldOptions): string {
   const result = parse(text, options);
   assert.equal(result.ok, false, `"${text}" was accepted`);
   return (result as { ok: false; reason: string }).reason;
+}
+
+/** The text without the invisible marks Intl writes around a number. */
+function bare(text: string): string {
+  return text.replace(/[\u200E\u200F\u061C\u2066-\u2069]/g, "");
 }
 
 test("a currency with no decimals has no cents to type", () => {
@@ -120,13 +125,54 @@ test("a paste loses the currency the field already knows, whatever its mark", ()
   assert.equal(typed("1.234 KWD", kwd).money?.minor, 1234n);
 });
 
+// What format wrote in a locale with its own digits has to read back there, or
+// every blur in Cairo, Tehran and Dhaka reddens the field.
+test("the locale's own digits and minus sign read back as the amount", () => {
+  const locales: readonly FieldOptions[] = [
+    { currency: "EGP", locale: "ar-EG" },
+    { currency: "EUR", locale: "fa-IR" },
+    { currency: "BDT", locale: "bn-BD" },
+  ];
+
+  for (const options of locales) {
+    for (const text of ["12.34", "0.07", "1234567.89", "-45.60", "-1234567.89"]) {
+      const original = amount(text, { currency: options.currency, locale: "en-US" });
+      const written = format(original, { locale: options.locale });
+
+      const read = parse(written, options);
+      assert.equal(read.ok, true, `${options.locale} refused "${written}"`);
+      if (!read.ok) continue;
+      assert.equal(read.money.minor, original.minor, `${options.locale} "${written}"`);
+
+      // And the field: typing it, leaving it, and typing what blur wrote back.
+      const state = blurred(typed(written, options), options);
+      assert.equal(state.problem, null, `${options.locale} reddened at "${written}"`);
+      assert.equal(state.money?.minor, original.minor, written);
+      assert.equal(typed(state.text, options).money?.minor, original.minor, state.text);
+    }
+  }
+});
+
+// The marks are how Intl keeps a number reading left to right inside
+// right-to-left text. They are invisible, and an amount does not hold them.
+test("the bidi marks Intl emits are dropped rather than refused", () => {
+  const egp: FieldOptions = { currency: "EGP", locale: "ar-EG" };
+  const written = format(amount("12.34", { currency: "EGP", locale: "en-US" }), {
+    locale: "ar-EG",
+  });
+
+  const state = typed(`\u200F${written}\u200E`, egp);
+  assert.equal(state.money?.minor, 1234n);
+  // The digits themselves are read, not rewritten to ASCII under the caret.
+  assert.equal(state.text, bare(written));
+});
+
 // Refusing is the point: a digit this parser cannot read must not be dropped or
 // half-read, because either one changes the amount without saying so.
-test("digits that are not ASCII are refused rather than half-read", () => {
+test("digits that are not the locale's are refused rather than half-read", () => {
   const arabicIndic = "\u0661\u0662\u0663\u0664\u066B\u0665\u0666";
-  const egp: FieldOptions = { currency: "EGP", locale: "ar-EG" };
 
-  for (const options of [eur, de, egp]) {
+  for (const options of [eur, de]) {
     const state = typed(arabicIndic, options);
     assert.equal(state.money, null, `${options.locale} accepted Arabic-Indic digits`);
     assert.equal(state.problem, "not-a-number", options.locale);
