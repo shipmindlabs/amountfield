@@ -7,7 +7,8 @@
  * what nobody tests when the logic only exists inside a component.
  */
 
-import { normalizeCurrency, type ExponentOverride } from "./exponents.ts";
+import { CurrencyMismatch, ExponentMismatch } from "./arithmetic.ts";
+import { exponentOf, normalizeCurrency, type ExponentOverride } from "./exponents.ts";
 import {
   format,
   isIncomplete,
@@ -19,14 +20,28 @@ import {
   type Separators,
 } from "./money.ts";
 
+/**
+ * Why the field does not accept what it holds: a text that is not an amount, or
+ * an amount outside the field's own bounds.
+ */
+export type FieldProblem = ParseFailure | "above-maximum" | "below-minimum";
+
 export type FieldState = {
   /** What the input element shows. Always what the person typed, until blur. */
   readonly text: string;
-  /** The exact amount, when the text is a complete one. */
+  /**
+   * The exact amount, when the text is a complete one. A bound is a rule about
+   * an amount rather than a reason there is none, so an amount outside one is
+   * still here and `problem` says the field does not accept it.
+   */
   readonly money: Money | null;
-  /** Why there is no amount. Null while the field is simply incomplete. */
-  readonly problem: ParseFailure | null;
-  /** True when the text is a prefix of a valid amount rather than wrong. */
+  /** Why there is no amount, or why this one is not accepted. */
+  readonly problem: FieldProblem | null;
+  /**
+   * True when the text is a prefix of a valid amount rather than wrong — and
+   * when the amount is still short of the field's minimum, which more typing
+   * can reach.
+   */
   readonly incomplete: boolean;
   /** Where the caret belongs in `text`, after whatever rewrote it. */
   readonly caret: number;
@@ -36,13 +51,20 @@ export type FieldOptions = {
   readonly currency: string;
   readonly locale?: string;
   readonly exponent?: ExponentOverride;
+  /** The smallest amount the field accepts, in its own currency. */
+  readonly min?: Money;
+  /** The largest amount the field accepts, in its own currency. */
+  readonly max?: Money;
 };
 
 /** A fresh field, optionally holding an amount already. */
 export function initial(options: FieldOptions, money?: Money): FieldState {
+  const limits = bounds(options);
   if (!money) return { text: "", money: null, problem: null, incomplete: true, caret: 0 };
   const text = format(money, { locale: options.locale });
-  return { text, money, problem: null, incomplete: false, caret: text.length };
+  // An amount handed in has stopped moving, so a bound it misses is reported at
+  // once rather than held back the way a half-typed one is.
+  return { text, money, problem: settled(money, limits), incomplete: false, caret: text.length };
 }
 
 /**
@@ -57,12 +79,21 @@ export function initial(options: FieldOptions, money?: Money): FieldState {
  * for whatever the sanitising removed in front of it.
  */
 export function typed(raw: string, options: FieldOptions, caret: number = raw.length): FieldState {
+  const limits = bounds(options);
   const text = sanitise(raw, options);
   const at = caretAfter(raw, caret, text, options);
 
   const result = parse(text, options);
   if (result.ok) {
-    return { text, money: result.money, problem: null, incomplete: false, caret: at };
+    // The two bounds are not symmetrical, because typing is not. Past the
+    // maximum is wrong at once: more digits only make the number larger. Short
+    // of the minimum is unfinished — "1" is on the way to "100" — so it waits
+    // for blur instead of reddening the field under the caret.
+    const outside = settled(result.money, limits);
+    if (outside === "below-minimum") {
+      return { text, money: result.money, problem: null, incomplete: true, caret: at };
+    }
+    return { text, money: result.money, problem: outside, incomplete: false, caret: at };
   }
 
   // "1 2" and "" are not errors, they are unfinished. Showing a red border to
@@ -75,12 +106,20 @@ export function typed(raw: string, options: FieldOptions, caret: number = raw.le
 
 /**
  * The field lost focus. This is where reformatting belongs: the value stops
- * moving, so rewriting it cannot fight the person entering it.
+ * moving, so rewriting it cannot fight the person entering it. It is also where
+ * an amount that never reached the minimum becomes a problem.
  */
 export function blurred(state: FieldState, options: FieldOptions): FieldState {
+  const limits = bounds(options);
   if (!state.money) return state;
   const text = format(state.money, { locale: options.locale });
-  return { ...state, text, caret: caretAfter(state.text, state.caret, text, options) };
+  return {
+    ...state,
+    text,
+    problem: settled(state.money, limits),
+    incomplete: false,
+    caret: caretAfter(state.text, state.caret, text, options),
+  };
 }
 
 /**
@@ -159,6 +198,46 @@ function meaningful(char: string, locale: Separators): boolean {
     (char >= "0" && char <= "9") ||
     locale.digits.includes(char)
   );
+}
+
+type Bounds = { readonly min: Money | null; readonly max: Money | null };
+
+const UNBOUNDED: Bounds = { min: null, max: null };
+
+/**
+ * The field's bounds, checked against the currency they are compared in.
+ *
+ * A bound in another currency, or with an exponent an override moved, is
+ * refused the way `add` refuses two such amounts: the counts are a factor of a
+ * hundred apart, and it is a mistake in the calling code rather than something
+ * the person typing can fix. So it throws, and it throws on an empty field too.
+ */
+function bounds(options: FieldOptions): Bounds {
+  const { min, max } = options;
+  if (!min && !max) return UNBOUNDED;
+
+  const unit: Money = {
+    minor: 0n,
+    currency: normalizeCurrency(options.currency),
+    exponent: exponentOf(options.currency, options.exponent),
+  };
+  return {
+    min: min ? comparable(unit, min) : null,
+    max: max ? comparable(unit, max) : null,
+  };
+}
+
+function comparable(unit: Money, bound: Money): Money {
+  if (bound.currency !== unit.currency) throw new CurrencyMismatch(unit, bound);
+  if (bound.exponent !== unit.exponent) throw new ExponentMismatch(unit, bound);
+  return bound;
+}
+
+/** Which bound a settled amount misses, if either. */
+function settled(money: Money, limits: Bounds): FieldProblem | null {
+  if (limits.max && money.minor > limits.max.minor) return "above-maximum";
+  if (limits.min && money.minor < limits.min.minor) return "below-minimum";
+  return null;
 }
 
 // The minus a spreadsheet, a PDF or a Japanese keyboard writes.

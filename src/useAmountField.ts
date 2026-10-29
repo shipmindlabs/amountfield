@@ -50,10 +50,23 @@ export function useAmountField(options: FieldOptions, startWith?: Money): UseAmo
   const [state, setState] = useState<FieldState>(() => initial(options, startWith));
   const input = useRef<HTMLInputElement | null>(null);
 
-  const { currency, locale, exponent } = options;
+  const { currency, locale, exponent, min, max } = options;
+  // The bounds are compared by their contents rather than by identity: a caller
+  // writing `min: { minor: 0n, ... }` in the call writes a new object on every
+  // render, and it is the same bound.
   const settings = useMemo<FieldOptions>(
-    () => ({ currency, locale, exponent }),
-    [currency, locale, exponent],
+    () => ({ currency, locale, exponent, min, max }),
+    [
+      currency,
+      locale,
+      exponent,
+      min?.minor,
+      min?.currency,
+      min?.exponent,
+      max?.minor,
+      max?.currency,
+      max?.exponent,
+    ],
   );
 
   const onChange = useCallback(

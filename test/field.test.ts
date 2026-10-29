@@ -1,11 +1,12 @@
 /**
  * The transitions an input actually goes through: a rewrite under the caret,
- * and a paste that carries more than a number.
+ * a paste that carries more than a number, and a bound the amount is outside.
  */
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
+import { CurrencyMismatch, ExponentMismatch } from "../src/arithmetic.ts";
 import { blurred, caretAfter, initial, sanitise, typed, type FieldOptions } from "../src/field.ts";
 import { parse, type Money } from "../src/money.ts";
 
@@ -19,6 +20,12 @@ function amount(text: string, options: FieldOptions): Money {
   assert.equal(result.ok, true, `expected "${text}" to parse`);
   return (result as { ok: true; money: Money }).money;
 }
+
+const bounded: FieldOptions = {
+  ...eur,
+  min: amount("10.00", eur),
+  max: amount("1000.00", eur),
+};
 
 test("a caret nothing rewrote stays where the browser put it", () => {
   const state = typed("1234.5", eur, 3);
@@ -106,4 +113,94 @@ test("a field that starts with an amount starts with the caret after it", () => 
   const start = initial(de, amount("1234.56", eur));
   assert.equal(start.text, "1.234,56");
   assert.equal(start.caret, start.text.length);
+});
+
+// Typing on past the maximum cannot make the number smaller, so there is
+// nothing to wait for: it is wrong at once.
+test("an amount above the maximum is a problem as soon as it is typed", () => {
+  const state = typed("1000.01", bounded);
+  assert.equal(state.problem, "above-maximum");
+  assert.equal(state.incomplete, false);
+  // The amount is still what the text says; the bound is a rule about it.
+  assert.equal(state.money?.minor, 100001n);
+
+  // The maximum itself is inside it.
+  assert.equal(typed("1000", bounded).problem, null);
+  assert.equal(typed("1,000.00", bounded).problem, null);
+
+  // Blur tidies the text and leaves the problem where it was.
+  const end = blurred(state, bounded);
+  assert.equal(end.text, "1,000.01");
+  assert.equal(end.problem, "above-maximum");
+  assert.equal(end.incomplete, false);
+});
+
+// "1" is on the way to "100", and a field that reddens there is the bug this
+// module exists to avoid.
+test("an amount below the minimum stays calm until blur", () => {
+  for (const text of ["1", "9", "9.99"]) {
+    const typing = typed(text, bounded);
+    assert.equal(typing.problem, null, `"${text}" reddened on the way to the minimum`);
+    assert.equal(typing.incomplete, true, text);
+  }
+
+  const typing = typed("9", bounded);
+  assert.equal(typing.money?.minor, 900n);
+
+  const end = blurred(typing, bounded);
+  assert.equal(end.text, "9.00");
+  assert.equal(end.problem, "below-minimum");
+  assert.equal(end.incomplete, false);
+
+  // And typing on until the minimum is reached clears it.
+  const enough = typed("90", bounded);
+  assert.equal(enough.problem, null);
+  assert.equal(enough.incomplete, false);
+  assert.equal(blurred(typed("10", bounded), bounded).problem, null);
+  // An empty field is unfinished rather than below anything.
+  assert.equal(typed("", bounded).problem, null);
+  assert.equal(typed("", bounded).incomplete, true);
+});
+
+test("a bound only one way is a bound only one way", () => {
+  const atLeast: FieldOptions = { ...eur, min: amount("0", eur) };
+  assert.equal(typed("-1", atLeast).incomplete, true);
+  assert.equal(typed("-1", atLeast).problem, null);
+  assert.equal(blurred(typed("-1", atLeast), atLeast).problem, "below-minimum");
+  assert.equal(typed("999999", atLeast).problem, null);
+
+  // The counts are compared, so a currency with no decimals needs no special case.
+  const upTo: FieldOptions = { ...jpy, max: amount("1000", jpy) };
+  assert.equal(typed("1200", upTo).problem, "above-maximum");
+  assert.equal(typed("1,000", upTo).problem, null);
+});
+
+test("a field that starts outside its bounds says so at once", () => {
+  const low = initial(bounded, amount("5.00", eur));
+  assert.equal(low.text, "5.00");
+  assert.equal(low.problem, "below-minimum");
+  assert.equal(low.incomplete, false);
+
+  const high = initial(bounded, amount("2000.00", eur));
+  assert.equal(high.problem, "above-maximum");
+  assert.equal(initial(bounded, amount("50.00", eur)).problem, null);
+});
+
+// A bound in another currency is a mistake in the calling code, not something
+// the person typing can fix — so it is thrown the way add throws it.
+test("a bound in another currency or another unit is refused, never compared", () => {
+  const yen = amount("1200", jpy);
+  assert.throws(() => typed("12.34", { ...eur, max: yen }), CurrencyMismatch);
+  assert.throws(() => typed("12.34", { ...eur, min: yen }), CurrencyMismatch);
+  // Including on a field with nothing in it yet.
+  assert.throws(() => typed("", { ...eur, min: yen }), CurrencyMismatch);
+  assert.throws(() => initial({ ...eur, max: yen }), CurrencyMismatch);
+  assert.throws(() => blurred(typed("12.34", eur), { ...eur, max: yen }), CurrencyMismatch);
+
+  // The same code with a different exponent is a different unit.
+  const whole: Money = { minor: 12n, currency: "EUR", exponent: 0 };
+  assert.throws(() => typed("12.34", { ...eur, min: whole }), ExponentMismatch);
+  assert.throws(() => typed("12.34", { ...eur, max: whole }), ExponentMismatch);
+  // Unless the field's own exponent is the overridden one too.
+  assert.equal(typed("12", { ...eur, exponent: 0, min: whole }).problem, null);
 });

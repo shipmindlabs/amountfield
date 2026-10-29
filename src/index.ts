@@ -56,6 +56,7 @@ export {
   sanitise,
   typed,
   type FieldOptions,
+  type FieldProblem,
   type FieldState,
 } from "./field.ts";
 

@@ -29,6 +29,14 @@ function Field({ start }: { start?: Money }) {
   });
 }
 
+function Bounded({ start }: { start?: Money }) {
+  const field = useAmountField(
+    { currency: "EUR", locale: "de-DE", min: money("10.00"), max: money("100.00") },
+    start,
+  );
+  return createElement("input", field.inputProps);
+}
+
 test("the hook renders an input carrying the right props", () => {
   const html = renderToStaticMarkup(createElement(Field));
   assert.match(html, /inputmode="decimal"/i);
@@ -41,4 +49,17 @@ test("an initial amount is rendered in the locale's format", () => {
   const html = renderToStaticMarkup(createElement(Field, { start: money("1234.56") }));
   assert.match(html, /value="1\.234,56"/);
   assert.match(html, /data-complete="true"/);
+});
+
+test("aria-invalid follows a bound the way it follows a bad number", () => {
+  const above = renderToStaticMarkup(createElement(Bounded, { start: money("150.00") }));
+  assert.match(above, /value="150,00"/);
+  assert.ok(above.includes('aria-invalid="true"'), above);
+
+  const inside = renderToStaticMarkup(createElement(Bounded, { start: money("50.00") }));
+  assert.ok(!inside.includes('aria-invalid="true"'), inside);
+
+  // An empty bounded field is unfinished, not below anything.
+  const empty = renderToStaticMarkup(createElement(Bounded));
+  assert.ok(!empty.includes('aria-invalid="true"'), empty);
 });

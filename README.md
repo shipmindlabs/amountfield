@@ -242,6 +242,8 @@ written and translated where the rest of the copy lives:
 | `bad-grouping` | a group separator where the digits are not grouped: `12 3456` |
 | `not-a-number` | characters an amount cannot contain, including a currency that is not the field's |
 | `empty` | nothing to read — `parse` only; a field reports this as incomplete |
+| `above-maximum` | larger than the field's `max`, reported while typing |
+| `below-minimum` | smaller than the field's `min`, reported on blur |
 
 **Submit the minor units, not a decimal.** `JSON.stringify` throws on a `bigint`,
 which is a useful nudge: send the count as a string and the exponent beside it,
@@ -286,6 +288,30 @@ sign that is not the ASCII one, and the digits are read by the locale as always.
 Only the field's own currency is stripped, by symbol or by code: `$12.34` in a
 EUR field still has a dollar sign in it, and is refused rather than quietly
 taken for euros.
+
+## Min and max
+
+A field can carry its own bounds, as amounts in its own currency:
+
+```ts
+useAmountField({ currency: "EUR", locale: "de-DE", min: tenEuros, max: thousandEuros });
+```
+
+They are compared as counts of minor units, so a bound in another currency — or
+with an exponent an override moved — is refused the way `add` refuses to add two
+such amounts: it throws `CurrencyMismatch` or `ExponentMismatch`, because it is
+a mistake in the calling code rather than something the person typing can fix.
+
+The two sides are not symmetrical, because typing is not. Above the maximum is
+wrong at once: `1000.01` in a field that stops at `1000` cannot be rescued by
+typing more digits, which only make the number larger. Below the minimum is
+**unfinished** rather than wrong — `1` is on the way to `100` — so
+`field.incomplete` is true, nothing is marked invalid, and the field reports
+`below-minimum` on blur, when the value has stopped moving.
+
+The amount is there in either case: `field.money` is what the text says, and
+`field.problem` is whether the field accepts it. `aria-invalid` follows
+`problem`, as it does for a number that cannot be read at all.
 
 ## Showing an amount
 
@@ -364,9 +390,9 @@ feature: a silent default of two decimals is the bug it exists to prevent.
 | Core | exact parsing and formatting in minor units, ISO 4217 exponents with an explicit override, locale separators via `Intl`, partial input while typing, negative amounts, `Money` as `bigint` |
 | Display | `display` with the locale's symbol placement, accounting negatives, narrow symbols and the amount's own decimals; `placementOf` for laying the pieces out by hand |
 | Arithmetic | `add`, `subtract`, `multiply` by an exact ratio with an explicit rounding mode, and `allocate` by largest remainder |
-| Field | pure state machine: typing, blur, incomplete versus invalid, initial value, the caret kept across a rewrite, a paste stripped of the field's own currency and of a unicode minus |
+| Field | pure state machine: typing, blur, incomplete versus invalid, initial value, the caret kept across a rewrite, a paste stripped of the field's own currency and of a unicode minus, per-field `min` and `max` |
 | React | `useAmountField` returning `inputProps`, including the `ref` the caret is restored through, tested with a real render |
-| Not yet | a masked variant, per-field min and max, currency selection inside the field |
+| Not yet | a masked variant, currency selection inside the field |
 
 The core is dependency-free and covers everything worth testing; the hook is
 deliberately thin so there is nothing in it to get wrong.
