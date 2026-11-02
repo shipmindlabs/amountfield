@@ -53,6 +53,7 @@ export {
   blurred,
   caretAfter,
   initial,
+  retarget,
   sanitise,
   typed,
   type FieldOptions,

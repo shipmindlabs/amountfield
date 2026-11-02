@@ -123,6 +123,48 @@ export function blurred(state: FieldState, options: FieldOptions): FieldState {
 }
 
 /**
+ * The options changed under a field that is already holding something.
+ *
+ * Which option changed decides what happens to the text, and the two cases are
+ * not the same question. A locale is how an amount is written, so a complete
+ * one is written again: the amount is untouched and the caret stays with its
+ * digits. Reading the text instead would refuse it — "1.234,56" is not an en-US
+ * number — which is how a language switch empties a form.
+ *
+ * A currency, or an exponent an override moved, is what the digits mean, so the
+ * text is read again under it: "12.50" carried into a JPY field is two decimals
+ * yen does not have, and says so rather than becoming 1250 yen nobody typed.
+ */
+export function retarget(state: FieldState, from: FieldOptions, to: FieldOptions): FieldState {
+  const was = unitOf(from);
+  const now = unitOf(to);
+  if (was.currency !== now.currency || was.exponent !== now.exponent) {
+    return typed(state.text, to, state.caret);
+  }
+
+  const before = from.locale ?? "en-US";
+  const after = to.locale ?? "en-US";
+
+  // Nothing complete to write again, and a half-typed text is the locale's to
+  // read: "1," is an unfinished group in en-US and one euro in de-DE.
+  if (!state.money) return before === after ? state : typed(state.text, to, state.caret);
+
+  const limits = bounds(to);
+  const text = before === after ? state.text : format(state.money, { locale: to.locale });
+  const outside = settled(state.money, limits);
+  // The asymmetry typing has: short of the minimum is unfinished while the
+  // amount is still being entered, and a problem once it has stopped moving.
+  const unfinished = outside === "below-minimum" && state.incomplete;
+  return {
+    text,
+    money: state.money,
+    problem: unfinished ? null : outside,
+    incomplete: unfinished,
+    caret: caretBetween(state.text, state.caret, text, from, to),
+  };
+}
+
+/**
  * Strip what a paste carries and an amount does not: the field's own currency,
  * a minus sign that is not the ASCII one, the bidi marks Intl writes around a
  * number in right-to-left text, a space in front of the number.
@@ -164,26 +206,41 @@ export function caretAfter(
   after: string,
   options: FieldOptions,
 ): number {
+  return caretBetween(before, caret, after, options, options);
+}
+
+/**
+ * The same, across a change of locale: what counts as a digit or a decimal
+ * point in the text that was there is not what counts in the one replacing it.
+ */
+function caretBetween(
+  before: string,
+  caret: number,
+  after: string,
+  from: FieldOptions,
+  to: FieldOptions,
+): number {
   if (before === after) return Math.max(0, Math.min(caret, after.length));
 
-  const locale = separatorsFor(options.locale ?? "en-US");
+  const was = separatorsFor(from.locale ?? "en-US");
+  const now = separatorsFor(to.locale ?? "en-US");
   const upto = Math.max(0, Math.min(caret, before.length));
 
   let wanted = 0;
   for (let index = 0; index < upto; index++) {
-    if (meaningful(before[index], locale)) wanted++;
+    if (meaningful(before[index], was)) wanted++;
   }
 
   if (wanted === 0) {
     for (let index = 0; index < after.length; index++) {
-      if (meaningful(after[index], locale)) return index;
+      if (meaningful(after[index], now)) return index;
     }
     return 0;
   }
 
   let seen = 0;
   for (let index = 0; index < after.length; index++) {
-    if (!meaningful(after[index], locale)) continue;
+    if (!meaningful(after[index], now)) continue;
     seen++;
     if (seen === wanted) return index + 1;
   }
@@ -198,6 +255,14 @@ function meaningful(char: string, locale: Separators): boolean {
     (char >= "0" && char <= "9") ||
     locale.digits.includes(char)
   );
+}
+
+/** What the digits in the field mean: the currency, and its exponent. */
+function unitOf(options: FieldOptions): { readonly currency: string; readonly exponent: number } {
+  return {
+    currency: normalizeCurrency(options.currency),
+    exponent: exponentOf(options.currency, options.exponent),
+  };
 }
 
 type Bounds = { readonly min: Money | null; readonly max: Money | null };
@@ -216,11 +281,7 @@ function bounds(options: FieldOptions): Bounds {
   const { min, max } = options;
   if (!min && !max) return UNBOUNDED;
 
-  const unit: Money = {
-    minor: 0n,
-    currency: normalizeCurrency(options.currency),
-    exponent: exponentOf(options.currency, options.exponent),
-  };
+  const unit: Money = { minor: 0n, ...unitOf(options) };
   return {
     min: min ? comparable(unit, min) : null,
     max: max ? comparable(unit, max) : null,

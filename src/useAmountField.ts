@@ -17,7 +17,14 @@ import {
   type RefObject,
 } from "react";
 
-import { blurred, initial, typed, type FieldOptions, type FieldState } from "./field.ts";
+import {
+  blurred,
+  initial,
+  retarget,
+  typed,
+  type FieldOptions,
+  type FieldState,
+} from "./field.ts";
 import type { Money } from "./money.ts";
 
 // The caret has to be back before the browser paints, so this is a layout
@@ -68,6 +75,16 @@ export function useAmountField(options: FieldOptions, startWith?: Money): UseAmo
       max?.exponent,
     ],
   );
+
+  // The options changed under the field: a new locale writes the amount again, a
+  // new currency reads the text again. Adjusted during the render that brought
+  // them in rather than in an effect, so the input is never painted holding text
+  // the options no longer explain.
+  const [targeted, setTargeted] = useState(settings);
+  if (targeted !== settings) {
+    setTargeted(settings);
+    setState((current) => retarget(current, targeted, settings));
+  }
 
   const onChange = useCallback(
     (event: Edit) =>
