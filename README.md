@@ -313,6 +313,38 @@ The amount is there in either case: `field.money` is what the text says, and
 `field.problem` is whether the field accepts it. `aria-invalid` follows
 `problem`, as it does for a number that cannot be read at all.
 
+## When the options change
+
+A field outlives its options: someone switches the interface language, or picks
+another currency from the select next to the amount. Those two are not the same
+question, so `retarget` does opposite things with the text.
+
+**A locale is how an amount is written.** A complete one is written again, the
+amount untouched and the caret still with its own digits. Reading the text
+instead would refuse it — `1.234,56` is not an en-US number — which is how a
+language switch empties a form.
+
+**A currency, or an exponent an override moved, is what the digits mean.** So
+the text is read again under it, and may well not survive: `12.50` carried into
+a JPY field is two decimals yen does not have, and says so rather than becoming
+¥1,250 nobody typed.
+
+```ts
+retarget(state, { currency: "EUR", locale: "de-DE" }, { currency: "EUR", locale: "en-US" });
+// text "1.234,56" -> "1,234.56", the amount unchanged, the caret kept
+
+retarget(state, { currency: "EUR", locale: "en-US" }, { currency: "JPY", locale: "en-US" });
+// text "12.50" as it was, money null, problem "too-many-decimals"
+```
+
+`useAmountField` applies it for you: hand it new options and the field retargets
+during the render that brought them in, so the input is never painted holding
+text its options no longer explain. Half-typed text has no amount to write
+again, so it is left for the new locale to read — `1,` is an unfinished group in
+en-US and one euro in de-DE. The bounds of the field it lands in are the ones it
+is judged by, and a bound in the wrong currency throws there as it does anywhere
+else.
+
 ## Showing an amount
 
 Holding an amount and showing one are different jobs. A field's own text carries
@@ -390,7 +422,7 @@ feature: a silent default of two decimals is the bug it exists to prevent.
 | Core | exact parsing and formatting in minor units, ISO 4217 exponents with an explicit override, locale separators via `Intl`, partial input while typing, negative amounts, `Money` as `bigint` |
 | Display | `display` with the locale's symbol placement, accounting negatives, narrow symbols and the amount's own decimals; `placementOf` for laying the pieces out by hand |
 | Arithmetic | `add`, `subtract`, `multiply` by an exact ratio with an explicit rounding mode, and `allocate` by largest remainder |
-| Field | pure state machine: typing, blur, incomplete versus invalid, initial value, the caret kept across a rewrite, a paste stripped of the field's own currency and of a unicode minus, per-field `min` and `max` |
+| Field | pure state machine: typing, blur, incomplete versus invalid, initial value, the caret kept across a rewrite, a paste stripped of the field's own currency and of a unicode minus, per-field `min` and `max`, and `retarget` when the locale or the currency changes underneath |
 | React | `useAmountField` returning `inputProps`, including the `ref` the caret is restored through, tested with a real render |
 | Not yet | a masked variant, currency selection inside the field |
 
